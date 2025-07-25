@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session, abort
 from Model.heart_cluster_model import HeartClusterModel
 import joblib
 import os
@@ -102,11 +102,11 @@ def submit():
             'ca': int(data['ca']),
             'thal': int(data['thal']),
             'trestbps': model.imputer_numeric.statistics_[1],
-            'exang': model.imputer_categorical.statistics_[2],
-            'slope': model.imputer_categorical.statistics_[3]
+            'exang': int(model.imputer_categorical.statistics_[2]),
+            'slope': int(model.imputer_categorical.statistics_[3])
         }
         result = model.predict(features)
-        cluster = int(float(str(result['cluster']).replace('cluster', ''))) if isinstance(result['cluster'], str) and 'cluster' in str(result['cluster']).lower() else int(result['cluster'])
+        cluster = result['cluster']
         print(f"Debug: Predicted result = {result}")
         response = {
             'cluster': cluster,
@@ -118,9 +118,21 @@ def submit():
                 'thalach': float(data['thalach']),
                 'oldpeak': float(data['oldpeak']),
                 'ca': int(data['ca']),
-                'thal': int(data['thal'])
+                'thal': int(data['thal']),
+                'sex': int(data['sex']),
+                'cp': int(data['cp']),
+                'trestbps': features['trestbps'],
+                'exang': features['exang'],
+                'slope': features['slope']
             }
         }
+        
+        # Store prediction in database
+        user_id = session['id']
+        prediction_data = json.dumps(response)
+        cursor.execute("INSERT INTO predictions (user_id, prediction_data, timestamp) VALUES (%s, %s, NOW())", (user_id, prediction_data))
+        db.commit()
+
         print(f"Response JSON: {json.dumps(response)}")  # Debug print
         session['result'] = response  # Store in session
         return redirect(url_for('result'))
@@ -137,6 +149,32 @@ def result():
     session.pop('result', None)  # Clear session after retrieval
     print(f"Received result from session: {result}")  # Debug print
     return render_template('results.html', result=result)
+
+@app.route('/records')
+def records():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    user_id = session['id']
+    session.pop('records', None)  # Clear any cached records
+    cursor.execute("SELECT id, prediction_data FROM predictions WHERE user_id = %s ORDER BY timestamp DESC", (user_id,))
+    records = [{'id': row[0], 'data': json.loads(row[1])} for row in cursor.fetchall()]
+    print(f"Fetched records count: {len(records)}")  # Debug print
+    return render_template('records.html', records=records)
+
+@app.route('/delete_record/<int:record_id>', methods=['POST'])
+def delete_record(record_id):
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    user_id = session['id']
+    try:
+        cursor.execute("DELETE FROM predictions WHERE id = %s AND user_id = %s", (record_id, user_id))
+        db.commit()
+        print(f"Deleted record with id: {record_id}")  # Debug print
+        return redirect(url_for('records'))
+    except mysql.connector.Error as e:
+        db.rollback()
+        print(f"Error deleting record: {e}")  # Debug print
+        abort(500, description="Failed to delete record.")
 
 if __name__ == '__main__':
     app.run(debug=True)
