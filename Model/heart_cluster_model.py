@@ -76,7 +76,7 @@ class HeartClusterModel:
 if __name__ == "__main__":
     model = HeartClusterModel()
     try:
-        df = model.load_and_preprocess('heartCluster.csv')
+        df = model.load_and_preprocess('heart_clusters.csv')
         model.train(df)
     except ValueError as e:
         print(f"Error during preprocessing: {e}")
