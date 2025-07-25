@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prediction Result</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-image: url('/static/bgimage.jpg');
+            background-size: cover;
+            background-attachment: fixed;
+            background-position: center;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #000000;
+            background-color: rgba(255, 255, 255, 0.8); /* White overlay with 80% opacity */
+        }
+        .navbar {
+            background-color: #000080; /* Navy blue */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .navbar-brand, .nav-link {
+            color: #ffffff !important;
+        }
+        .card {
+            background-color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .card-header {
+            background-color: #000080; /* Navy blue */
+            color: #ffffff;
+            border-radius: 10px 10px 0 0;
+            font-size: 1.25rem;
+        }
+        .btn-primary {
+            background-color: #8B0000; /* Dark red */
+            border-color: #8B0000;
+            transition: background-color 0.2s;
+        }
+        .btn-primary:hover {
+            background-color: #700000; /* Darker red */
+            border-color: #700000;
+        }
+        .btn-secondary {
+            background-color: #000080; /* Navy blue */
+            border-color: #000080;
+            transition: background-color 0.2s;
+        }
+        .btn-secondary:hover {
+            background-color: #000066; /* Darker navy blue */
+            border-color: #000066;
+        }
+        .risk-description {
+            background-color: #ffffff;
+            padding: 15px;
+            border-left: 4px solid #000080; /* Navy blue */
+            margin-bottom: 15px;
+        }
+        .text-success { color: #28a745; }
+        .text-warning { color: #ffc107; }
+        .text-danger { color: #dc3545; }
+        .progress {
+            margin-top: 10px;
+            height: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin-top: 60px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg fixed-top">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="{{ url_for('predict') }}">Heart Disease Risk Prediction</a>
+            <div class="navbar-nav ms-auto">
+                <a class="nav-link" href="#">Records</a>
+                <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
+            </div>
+        </div>
+    </nav>
+    <div class="container">
+        {% if result %}
+            <div class="row justify-content-center">
+                <div class="col-md-12">
+                    <!-- Prediction Summary Card -->
+                    <div class="card mb-4">
+                        <div class="card-header">Prediction Summary</div>
+                        <div class="card-body">
+                            <div class="progress">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%;" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100">Analysis Complete</div>
+                            </div>
+                            <div id="predictionInfo" class="text-center mt-3"></div>
+                            <button id="copyButton" class="btn btn-primary btn-sm mt-3" onclick="copyToClipboard()">Copy Result</button>
+                            <button id="downloadButton" class="btn btn-secondary btn-sm mt-3 ms-2" onclick="downloadReport()">Download Report</button>
+                        </div>
+                    </div>
+
+                    <!-- Risk Details Card -->
+                    <div class="card mb-4">
+                        <div class="card-header">Prediction Details</div>
+                        <div class="card-body">
+                            <p class="card-text"><strong>Input Data Used:</strong></p>
+                            <ul id="inputDetails" class="list-group list-group-flush"></ul>
+                        </div>
+                    </div>
+
+                    <!-- Risk Level Descriptions -->
+                    <div class="card">
+                        <div class="card-header">Risk Level Guide</div>
+                        <div class="card-body">
+                            <div class="risk-description mb-3">
+                                <h5 class="text-success">Low Risk (Cluster 1)</h5>
+                                <p>Indicates minimal likelihood of heart disease. Patients typically have normal cholesterol levels, healthy heart rates, and no significant symptoms. Regular check-ups are recommended.</p>
+                            </div>
+                            <div class="risk-description mb-3">
+                                <h5 class="text-warning">Moderate Risk (Cluster 2)</h5>
+                                <p>Suggests a moderate chance of heart disease. This cluster may include patients with elevated cholesterol or mild symptoms. Lifestyle changes and monitoring are advised.</p>
+                            </div>
+                            <div class="risk-description mb-3">
+                                <h5 class="text-danger">High Risk (Cluster 3)</h5>
+                                <p>Indicates a high likelihood of heart disease. Patients often have high cholesterol, abnormal heart rates, or multiple risk factors. Immediate medical consultation is recommended.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <script>
+                // Debug: Log the raw result as a string
+                const rawResultString = '{{ result|tojson|safe }}';
+                console.log('Raw result string:', rawResultString);
+                console.log('Raw result type:', typeof rawResultString);
+
+                // Parse JSON in JavaScript
+                let result;
+                try {
+                    result = JSON.parse(rawResultString);
+                    console.log('Parsed result:', result);
+                } catch (e) {
+                    console.error('JSON parsing error:', e);
+                    document.getElementById('predictionInfo').innerHTML = `<p class="text-danger">Error parsing prediction data: ${e.message}</p>`;
+                    throw e;
+                }
+
+                // Populate prediction info
+                const predictionInfo = document.getElementById('predictionInfo');
+                if (result) {
+                    predictionInfo.innerHTML = `
+                        <p><strong>Predicted Cluster:</strong> ${result.cluster} (<span class="${
+                            result.cluster === 1 ? 'text-success' : result.cluster === 2 ? 'text-warning' : 'text-danger'
+                        }">${result.risk_level}</span>)</p>
+                        <p><strong>Message:</strong> ${result.message}</p>
+                    `;
+                } else {
+                    predictionInfo.innerHTML = '<p class="text-danger">No prediction data available.</p>';
+                }
+
+                // Populate input details
+                const inputDetails = document.getElementById('inputDetails');
+                if (result && result.input) {
+                    const inputs = [
+                        { label: 'Age', value: result.input.age },
+                        { label: 'Cholesterol', value: result.input.chol, unit: 'mg/dL' },
+                        { label: 'Max Heart Rate', value: result.input.thalach, unit: 'bpm' },
+                        { label: 'Oldpeak', value: result.input.oldpeak },
+                        { label: 'Number of Vessels', value: result.input.ca },
+                        { label: 'Thalassemia', value: result.input.thal }
+                    ];
+                    inputs.forEach(item => {
+                        const li = document.createElement('li');
+                        li.className = 'list-group-item';
+                        li.textContent = `${item.label}: ${item.value}${item.unit ? ` ${item.unit}` : ''}`;
+                        inputDetails.appendChild(li);
+                    });
+                }
+
+                // Copy to clipboard function
+                function copyToClipboard() {
+                    const text = predictionInfo.innerHTML
+                        .replace(/<[^>]+>/g, ' ') // Remove HTML tags
+                        .replace(/\s+/g, ' ')     // Normalize whitespace
+                        .trim();
+                    navigator.clipboard.writeText(text).then(() => {
+                        alert('Prediction copied to clipboard!');
+                    }).catch(err => {
+                        console.error('Failed to copy:', err);
+                    });
+                }
+
+                // Download report function
+                function downloadReport() {
+                    if (result) {
+                        const report = `Prediction Report\n\nPredicted Cluster: ${result.cluster} (${result.risk_level})\nMessage: ${result.message}\n\nInput Data:\n${inputs.map(item => `${item.label}: ${item.value}${item.unit ? ` ${item.unit}` : ''}`).join('\n')}`;
+                        const blob = new Blob([report], { type: 'text/plain' });
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'prediction_report.txt';
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                    }
+                }
+            </script>
+        {% else %}
+            <div class="alert alert-warning text-center" role="alert">
+                No prediction data available. Please submit a prediction first.
+            </div>
+        {% endif %}
+        <div class="text-center mt-4">
+            <a href="{{ url_for('predict') }}" class="btn btn-primary">Back to Prediction</a>
+        </div>
+    </div>
+</body>
+</html>
