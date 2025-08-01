@@ -1,4 +1,4 @@
-<!-- View/results.html -->
+<!-- View/prediction/results.html -->
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -11,7 +11,7 @@
     />
     <style>
       body {
-        background-image: url("/static/bgimage.jpg");
+        background-image: url("{{ url_for('static', filename='images/bgimage.jpg') }}");
         background-size: cover;
         background-attachment: fixed;
         background-position: center;
@@ -87,12 +87,14 @@
   <body>
     <nav class="navbar navbar-expand-lg fixed-top">
       <div class="container-fluid">
-        <a class="navbar-brand" href="{{ url_for('model_selection') }}"
+        <a
+          class="navbar-brand"
+          href="{{ url_for('prediction.model_selection') }}"
           >Heart Disease Risk Prediction</a
         >
         <div class="navbar-nav ms-auto">
-          <a class="nav-link" href="{{ url_for('records') }}">Records</a>
-          <a class="nav-link" href="{{ url_for('logout') }}">Logout</a>
+          <a class="nav-link" href="{{ url_for('record.records') }}">Records</a>
+          <a class="nav-link" href="{{ url_for('auth.logout') }}">Logout</a>
         </div>
       </div>
     </nav>
@@ -372,7 +374,9 @@
       </div>
       {% endif %}
       <div class="text-center mt-4">
-        <a href="{{ url_for('model_selection') }}" class="btn btn-primary"
+        <a
+          href="{{ url_for('prediction.model_selection') }}"
+          class="btn btn-primary"
           >Back to Model Selection</a
         >
       </div>
