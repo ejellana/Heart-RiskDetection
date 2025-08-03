@@ -1,268 +1,241 @@
 from flask import Blueprint, request, jsonify
-from werkzeug.security import generate_password_hash, check_password_hash
-from config.database import DatabaseConfig
-from flask_cors import cross_origin
-import logging
-import json
-import numpy as np
 from Model.implementations.heart_cluster_model import HeartClusterModel
 from Model.implementations.neural_network_model import NeuralNetworkModel
+from config.database import DatabaseConfig
+from werkzeug.security import generate_password_hash, check_password_hash
+import json
+import logging
+import numpy as np
 
+# Configure logging
 logging.basicConfig(level=logging.DEBUG)
-android_api_bp = Blueprint('android_api', __name__)
+logger = logging.getLogger(__name__)
 
-# Allowed specialties for registration
-ALLOWED_SPECIALTIES = [
-    "Cardiologist",
-    "Interventional Cardiologist",
-    "Electrophysiologist",
-    "Cardiac Surgeon",
-    "General Practitioner (GP)"
-]
+api_bp = Blueprint('api', __name__, url_prefix='/api/android')
 
-@android_api_bp.route('/register', methods=['POST'])
-@cross_origin()
+cluster_model = HeartClusterModel()
+neural_model = NeuralNetworkModel()
+
+@api_bp.route('/')
+def index():
+    return jsonify({'message': 'Android API is running'})
+
+@api_bp.route('/register', methods=['POST'])
 def register():
-    data = request.form
-    name = data.get('name')
-    username = data.get('username')
-    password = data.get('password')
-    specialty = data.get('specialty', '')
-
-    logging.debug(f"Register request: name={name}, username={username}, specialty={specialty}")
-
-    # Validate inputs
-    if not all([name, username, password]):
-        response = {"message": "Missing name, username, or password"}
-        logging.debug(f"Register response: {json.dumps(response)}")
-        return jsonify(response), 400
-    
-    if specialty and specialty not in ALLOWED_SPECIALTIES:
-        response = {"message": f"Invalid specialty. Must be one of: {', '.join(ALLOWED_SPECIALTIES)}"}
-        logging.debug(f"Register response: {json.dumps(response)}")
-        return jsonify(response), 400
-
     try:
-        conn = DatabaseConfig.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
-        if cursor.fetchone():
-            conn.close()
-            response = {"message": "Username already taken"}
-            logging.debug(f"Register response: {json.dumps(response)}")
-            return jsonify(response), 400
+        data = request.form
+        name = data.get('name')
+        username = data.get('username')
+        password = data.get('password')
+        specialty = data.get('specialty')
+
+        logger.debug(f"Register request: name={name}, username={username}, specialty={specialty}")
+
+        if not all([name, username, password]):
+            return jsonify({'error': 'Missing required fields'}), 400
 
         hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
-        sql = "INSERT INTO users (name, username, password, specialty) VALUES (%s, %s, %s, %s)"
-        cursor.execute(sql, (name, username, hashed_password, specialty or None))
-        conn.commit()
-        conn.close()
-        
-        response = {"username": username, "name": name, "specialty": specialty}
-        logging.debug(f"Register response: {json.dumps(response)}")
-        return jsonify(response), 201
-    
-    except Exception as e:
-        response = {"message": f"Registration failed: {str(e)}"}
-        logging.error(f"Registration error: {str(e)}, Response: {json.dumps(response)}")
-        return jsonify(response), 500
 
-@android_api_bp.route('/login', methods=['POST'])
-@cross_origin()
-def login():
-    data = request.form
-    username = data.get('username')
-    password = data.get('password')
-
-    logging.debug(f"Login request: username={username}")
-
-    if not all([username, password]):
-        response = {"message": "Missing username or password"}
-        logging.debug(f"Login response: {json.dumps(response)}")
-        return jsonify(response), 400
-
-    try:
         conn = DatabaseConfig.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username, password, name FROM users WHERE username = %s", (username,))
+        cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
+        if cursor.fetchone():
+            conn.close()
+            return jsonify({'error': 'Username already exists'}), 400
+
+        cursor.execute(
+            "INSERT INTO users (name, username, password, specialty) VALUES (%s, %s, %s, %s)",
+            (name, username, hashed_password, specialty)
+        )
+        user_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        response = {
+            'id': str(user_id),  # Convert to string to match /login response
+            'username': username,
+            'name': name,
+            'specialty': specialty
+        }
+        logger.debug(f"Register response: {response}")
+        return jsonify(response), 201
+    except Exception as e:
+        logger.error(f"Register error: {str(e)}")
+        return jsonify({'error': str(e)}), 400
+
+@api_bp.route('/login', methods=['POST'])
+def login():
+    try:
+        data = request.form
+        username = data.get('username')
+        password = data.get('password')
+
+        if not all([username, password]):
+            return jsonify({'error': 'Missing username or password'}), 400
+
+        conn = DatabaseConfig.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, username, name, password FROM users WHERE username = %s", (username,))
         user = cursor.fetchone()
         conn.close()
 
-        if user and check_password_hash(user[2], password):
-            response = {"id": str(user[0]), "username": user[1], "name": user[3], "message": "Login successful"}
-            logging.debug(f"Login response: {json.dumps(response)}")
-            return jsonify(response), 200
+        if user and check_password_hash(user[3], password):
+            logger.debug(f"Login response: {{'id': '{user[0]}', 'username': '{user[1]}', 'name': '{user[2]}', 'message': 'Login successful'}}")
+            return jsonify({
+                'id': str(user[0]),
+                'username': user[1],
+                'name': user[2],
+                'message': 'Login successful'
+            }), 200
         else:
-            response = {"message": "Invalid username or password"}
-            logging.debug(f"Login response: {json.dumps(response)}")
-            return jsonify(response), 401
-
+            logger.error(f"Login failed for username: {username}")
+            return jsonify({'error': 'Invalid credentials'}), 401
     except Exception as e:
-        response = {"message": f"Login failed: {str(e)}"}
-        logging.error(f"Login error: {str(e)}, Response: {json.dumps(response)}")
-        return jsonify(response), 500
+        logger.error(f"Login error: {str(e)}")
+        return jsonify({'error': str(e)}), 400
 
-@android_api_bp.route('/records/<user_id>', methods=['GET'])
-@cross_origin()
+@api_bp.route('/predict', methods=['POST'])
+def predict():
+    try:
+        data = request.form
+        user_id = data.get('user_id')
+        model_type = data.get('model_type')
+
+        logger.debug(f"Predict request: user_id={user_id}, model_type={model_type}, input_data={dict(data)}")
+
+        if not all([user_id, model_type]):
+            return jsonify({'error': 'Missing user_id or model_type'}), 400
+
+        conn = DatabaseConfig.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+        user = cursor.fetchone()
+        if not user:
+            conn.close()
+            logger.error(f"User not found: user_id={user_id}")
+            return jsonify({'error': 'User not found'}), 404
+
+        response = {}
+        if model_type == 'Cluster':
+            required_fields = ['age', 'sex', 'cp', 'chol', 'thalach', 'oldpeak', 'ca', 'thal']
+            if not all(field in data for field in required_fields):
+                return jsonify({'error': 'Missing required fields for Cluster model'}), 400
+            try:
+                features = {
+                    'age': float(data['age']),
+                    'sex': int(data['sex']),
+                    'cp': int(data['cp']),
+                    'trestbps': float(data.get('trestbps', 0.0)),
+                    'chol': float(data['chol']),
+                    'thalach': float(data['thalach']),
+                    'exang': int(data.get('exang', 0)),
+                    'oldpeak': float(data['oldpeak']),
+                    'slope': int(data.get('slope', 0)),
+                    'ca': int(data['ca']),
+                    'thal': int(data['thal'])
+                }
+                result = cluster_model.Predict(features)
+                response = {
+                    'cluster': int(result['cluster']),
+                    'risk_level': result['risk_level'],
+                    'message': result['message'],
+                    'input': {key: str(value) for key, value in features.items()},
+                    'model_type': 'Cluster'
+                }
+            except ValueError as ve:
+                logger.error(f"Cluster prediction error: {str(ve)}")
+                return jsonify({'error': f'Invalid input: {str(ve)}'}), 400
+        else:  # Neural Network
+            required_fields = ['age', 'trestbps', 'chol', 'thalach', 'oldpeak', 'ca', 'sex', 'cp', 'exang', 'slope', 'thal']
+            if not all(field in data for field in required_fields):
+                return jsonify({'error': 'Missing required fields for Neural Network model'}), 400
+            try:
+                features = {
+                    'age': float(data['age']),
+                    'trestbps': float(data['trestbps']),
+                    'chol': float(data['chol']),
+                    'thalach': float(data['thalach']),
+                    'oldpeak': float(data['oldpeak']),
+                    'ca': int(data['ca']),
+                    'sex': int(data['sex']),
+                    'cp': int(data['cp']),
+                    'exang': int(data['exang']),
+                    'slope': int(data['slope']),
+                    'thal': int(data['thal'])
+                }
+                result = neural_model.Predict(features)
+                response = {
+                    'cluster': int(result['cluster']),
+                    'risk_level': result['risk_level'],
+                    'message': result['message'],
+                    'input': {key: str(value) for key, value in features.items()},
+                    'model_type': 'Neural Network'
+                }
+            except ValueError as ve:
+                logger.error(f"Neural Network prediction error: {str(ve)}")
+                return jsonify({'error': f'Invalid input: {str(ve)}'}), 400
+
+        prediction_data = json.dumps(response)
+        cursor.execute(
+            "INSERT INTO predictions (user_id, prediction_data, model_type, timestamp) VALUES (%s, %s, %s, NOW())",
+            (user_id, prediction_data, response['model_type'])
+        )
+        conn.commit()
+        conn.close()
+
+        logger.debug(f"Predict response: {response}")
+        return jsonify(response), 200
+    except Exception as e:
+        logger.error(f"Predict error: {str(e)}")
+        return jsonify({'error': str(e)}), 400
+
+@api_bp.route('/records/<user_id>')
 def get_records(user_id):
     try:
         conn = DatabaseConfig.get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT p.id, p.user_id, p.prediction_data, p.timestamp, p.model_type, u.username
-            FROM predictions p
-            JOIN users u ON p.user_id = u.id
-            WHERE p.user_id = %s
-        """, (user_id,))
+        cursor.execute(
+            "SELECT p.id, p.user_id, u.username, p.prediction_data, p.model_type, p.timestamp "
+            "FROM predictions p JOIN users u ON p.user_id = u.id WHERE p.user_id = %s",
+            (user_id,)
+        )
         records = cursor.fetchall()
         conn.close()
-
-        predictions = [
-            {
-                "id": record[0],
-                "user_id": str(record[1]),  # Convert INT to string
-                "username": record[5],
-                "prediction_data": record[2],
-                "timestamp": record[3].isoformat(),
-                "model_type": record[4]
-            } for record in records
-        ]
-        
-        logging.debug(f"Get records response: {json.dumps(predictions)}")
-        return jsonify(predictions), 200
-
+        response = [{
+            'id': record[0],
+            'user_id': str(record[1]),
+            'username': record[2],
+            'prediction_data': record[3],
+            'model_type': record[4],
+            'timestamp': record[5].isoformat()
+        } for record in records]
+        logger.debug(f"Get records response for user_id={user_id}: {response}")
+        return jsonify(response), 200
     except Exception as e:
-        response = {"message": f"Failed to fetch records: {str(e)}"}
-        logging.error(f"Records fetch error: {str(e)}, Response: {json.dumps(response)}")
-        return jsonify(response), 500
+        logger.error(f"Get records error: {str(e)}")
+        return jsonify({'error': str(e)}), 400
 
-@android_api_bp.route('/records/all', methods=['GET'])
-@cross_origin()
+@api_bp.route('/records/all')
 def get_all_records():
     try:
         conn = DatabaseConfig.get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT p.id, p.user_id, p.prediction_data, p.timestamp, p.model_type, u.username
-            FROM predictions p
-            JOIN users u ON p.user_id = u.id
-            ORDER BY p.timestamp
-        """)
+        cursor.execute(
+            "SELECT p.id, p.user_id, u.username, p.prediction_data, p.model_type, p.timestamp "
+            "FROM predictions p JOIN users u ON p.user_id = u.id"
+        )
         records = cursor.fetchall()
         conn.close()
-
-        predictions = [
-            {
-                "id": record[0],
-                "user_id": str(record[1]),  # Convert INT to string
-                "username": record[5],
-                "prediction_data": record[2],
-                "timestamp": record[3].isoformat(),
-                "model_type": record[4]
-            } for record in records
-        ]
-        
-        logging.debug(f"Get all records response: {json.dumps(predictions)}")
-        return jsonify(predictions), 200
-
+        response = [{
+            'id': record[0],
+            'user_id': str(record[1]),
+            'username': record[2],
+            'prediction_data': record[3],
+            'model_type': record[4],
+            'timestamp': record[5].isoformat()
+        } for record in records]
+        logger.debug(f"Get all records response: {response}")
+        return jsonify(response), 200
     except Exception as e:
-        response = {"message": f"Failed to fetch all records: {str(e)}"}
-        logging.error(f"Get all records error: {str(e)}, Response: {json.dumps(response)}")
-        return jsonify(response), 500
-
-@android_api_bp.route('/predict', methods=['POST'])
-@cross_origin()
-def predict():
-    data = request.form.to_dict()
-    user_id = data.get('user_id')
-    model_type = data.get('model_type')
-    input_data = {
-        "age": data.get('age', None),
-        "trestbps": data.get('trestbps', None),
-        "chol": data.get('chol', None),
-        "thalach": data.get('thalach', None),
-        "oldpeak": data.get('oldpeak', None),
-        "ca": data.get('ca', None),
-        "sex": data.get('sex', None),
-        "cp": data.get('cp', None),
-        "exang": data.get('exang', None),
-        "slope": data.get('slope', None),
-        "thal": data.get('thal', None)
-    }
-
-    logging.debug(f"Predict request: user_id={user_id}, model_type={model_type}, input_data={input_data}")
-
-    # Define required fields per model type
-    required_fields = {
-        "Cluster": ["age", "chol", "thalach", "oldpeak", "ca", "sex", "cp", "thal"],  # Minimal required fields
-        "Neural Network": ["age", "trestbps", "chol", "thalach", "oldpeak", "ca", "sex", "cp", "exang", "slope", "thal"]
-    }
-    # Check for missing required fields
-    missing_fields = [key for key in required_fields.get(model_type, []) if input_data[key] is None or (isinstance(input_data[key], str) and not input_data[key].strip())]
-    invalid_types = []
-    for key in required_fields.get(model_type, []):
-        try:
-            if input_data[key] is not None and input_data[key].strip():
-                if key in ['age', 'trestbps', 'chol', 'thalach', 'oldpeak']:
-                    input_data[key] = float(input_data[key])
-                elif key in ['ca', 'sex', 'cp', 'exang', 'slope', 'thal']:
-                    input_data[key] = int(input_data[key])
-        except (ValueError, TypeError):
-            invalid_types.append(key)
-
-    if not user_id or not model_type or missing_fields or invalid_types:
-        error_msg = {
-            "message": "Invalid or missing fields",
-            "missing_fields": missing_fields,
-            "invalid_types": invalid_types,
-            "user_id": user_id,
-            "model_type": model_type
-        }
-        logging.error(f"Validation error: {error_msg}")
-        return jsonify(error_msg), 400
-
-    try:
-        # Pass input_data dictionary to model
-        logging.debug(f"Input data for model: {input_data}")
-
-        # Load model and make prediction
-        if model_type == "Cluster":
-            model = HeartClusterModel()
-            prediction = model.Predict(input_data)
-            cluster = prediction['cluster']
-            risk_level = prediction['risk_level']
-        elif model_type == "Neural Network":
-            model = NeuralNetworkModel()
-            prediction = model.Predict(input_data)
-            cluster = prediction['cluster']
-            risk_level = prediction['risk_level']
-        else:
-            response = {"message": "Invalid model_type: must be 'Cluster' or 'Neural Network'"}
-            logging.debug(f"Predict response: {json.dumps(response)}")
-            return jsonify(response), 400
-
-        # Create prediction data
-        prediction_data = {
-            "cluster": cluster,
-            "risk_level": risk_level,
-            "message": f"Patient is predicted to be in Cluster {cluster} ({risk_level}).",
-            "input": input_data,
-            "model_type": model_type
-        }
-
-        # Save to database
-        conn = DatabaseConfig.get_connection()
-        cursor = conn.cursor()
-        sql = "INSERT INTO predictions (user_id, prediction_data, model_type) VALUES (%s, %s, %s)"
-        cursor.execute(sql, (user_id, json.dumps(prediction_data), model_type))
-        conn.commit()
-        conn.close()
-
-        logging.debug(f"Predict response: {json.dumps(prediction_data)}")
-        return jsonify(prediction_data), 200
-
-    except Exception as e:
-        response = {"message": f"Prediction failed: {str(e)}"}
-        logging.error(f"Prediction error: {str(e)}, Response: {json.dumps(response)}")
-        return jsonify(response), 500
+        logger.error(f"Get all records error: {str(e)}")
+        return jsonify({'error': str(e)}), 400
